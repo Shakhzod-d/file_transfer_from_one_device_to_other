@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import SimplePeer from "simple-peer";
 
@@ -11,11 +10,23 @@ export default function Home() {
   const [answer, setAnswer] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const scannedOffer = urlParams.get("offer");
+    if (scannedOffer) {
+      setOffer(scannedOffer);
+      acceptOffer(scannedOffer);
+    }
+  }, []);
+
   const createOffer = () => {
+    localStorage.setItem("p2p_offer", ""); // Clear previous offers
     const p = new SimplePeer({ initiator: true, trickle: false });
-    p.on("signal", (data: SimplePeer.SignalData) =>
-      setOffer(JSON.stringify(data))
-    );
+    p.on("signal", (data) => {
+      const offerString = JSON.stringify(data);
+      setOffer(offerString);
+      localStorage.setItem("p2p_offer", offerString);
+    });
     p.on("connect", () => console.log("Connected!"));
     p.on("data", (data) => {
       const blob = new Blob([data]);
@@ -28,65 +39,43 @@ export default function Home() {
     setPeer(p);
   };
 
-  const acceptOffer = () => {
-    const storedOffer = localStorage.getItem("p2p_offer");
-    if (!offer && storedOffer) setOffer(storedOffer);
-    if (!offer) return;
+  const acceptOffer = (incomingOffer?: string) => {
+    const offerToUse = incomingOffer || localStorage.getItem("p2p_offer");
+    if (!offerToUse) return;
 
     const p = new SimplePeer({ initiator: false, trickle: false });
-    p.signal(JSON.parse(offer));
-
+    p.signal(JSON.parse(offerToUse));
     p.on("signal", (data) => {
       const answerString = JSON.stringify(data);
       setAnswer(answerString);
       localStorage.setItem("p2p_answer", answerString);
     });
-
-    p.on("connect", () => {
-      console.log("✅ Connected!");
-    });
-
+    p.on("connect", () => console.log("Connected!"));
     setPeer(p);
   };
 
   const sendFile = () => {
     if (!peer || !fileInputRef.current?.files?.[0]) return;
-
-    if (peer.connected) {
-      // ✅ Ensure connection is established
-      const file = fileInputRef.current.files[0];
-      const reader = new FileReader();
-      reader.readAsArrayBuffer(file);
-      reader.onload = () => {
-        if (reader.result) {
-          peer.send(reader.result as ArrayBuffer);
-        }
-      };
-    } else {
-      console.error("Connection is not open yet!");
-    }
+    const file = fileInputRef.current.files[0];
+    const reader = new FileReader();
+    reader.readAsArrayBuffer(file);
+    reader.onload = () => {
+      if (reader.result) {
+        peer.send(reader.result as ArrayBuffer);
+      }
+    };
   };
 
-  peer?.on("connect", () => {
-    console.log("✅ WebRTC Connection Established!");
-  });
-
   useEffect(() => {
-    const checkForConnections = setInterval(() => {
-      const storedOffer = localStorage.getItem("p2p_offer");
+    const checkForAnswers = setInterval(() => {
       const storedAnswer = localStorage.getItem("p2p_answer");
-
-      if (storedOffer && !offer) {
-        setOffer(storedOffer);
-      }
-
       if (storedAnswer && peer) {
         peer.signal(JSON.parse(storedAnswer));
       }
-    }, 1000); // Poll every 3 seconds
+    }, 3000); // Check every 3 seconds
 
-    return () => clearInterval(checkForConnections);
-  }, [offer, peer]);
+    return () => clearInterval(checkForAnswers);
+  }, [peer]);
 
   return (
     <div className="flex flex-col items-center justify-center h-screen p-5 bg-gray-100">
@@ -96,10 +85,12 @@ export default function Home() {
         answer={answer}
         setAnswer={setAnswer}
         createOffer={createOffer}
-        acceptOffer={acceptOffer}
+        acceptOffer={() => acceptOffer()}
         peer={peer}
       />
-      <QRCodeDisplay offer={offer} />
+      <QRCodeDisplay
+        offer={`https://file-transfer-from-one-device-to-other.vercel.app/?offer=${offer}`}
+      />
       <FileInput fileInputRef={fileInputRef} sendFile={sendFile} />
     </div>
   );
